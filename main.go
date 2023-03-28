@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
 	"os"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v2"
 
 	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
@@ -26,16 +27,15 @@ import (
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
-	"helm.sh/helm/v3/pkg/strvals"
 )
 
 var settings *cli.EnvSettings
 
 var (
-	url         = "https://charts.helm.sh/stable"
-	repoName    = "stable"
-	chartName   = "mysql"
-	releaseName = "mysql-dev"
+	url1        = "https://xuanson2406.github.io/library_API/charts"
+	repoName    = "sondx12"
+	chartName   = "helm"
+	releaseName = "sondx12-dev"
 	namespace   = "mysql-test"
 	args        = map[string]string{
 		// comma seperated values to set
@@ -47,11 +47,13 @@ func main() {
 	os.Setenv("HELM_NAMESPACE", namespace)
 	settings = cli.New()
 	// Add helm repo
-	RepoAdd(repoName, url)
+	RepoAdd(repoName, url1)
 	// Update charts from the helm repo
 	RepoUpdate()
 	// Install charts
 	InstallChart(releaseName, repoName, chartName, args)
+	// UnInstall charts
+	// UnInstallChart(releaseName)
 }
 
 // RepoAdd adds repo with given name and url
@@ -150,6 +152,7 @@ func RepoUpdate() {
 
 // InstallChart
 func InstallChart(name, repo, chart string, args map[string]string) {
+	settings.KubeConfig = "/home/sondx/.kube/config"
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
 		log.Fatal(err)
@@ -176,9 +179,9 @@ func InstallChart(name, repo, chart string, args map[string]string) {
 	}
 
 	// Add args
-	if err := strvals.ParseInto(args["set"], vals); err != nil {
-		log.Fatal(errors.Wrap(err, "failed parsing --set data"))
-	}
+	// if err := strvals.ParseInto(args["set"], vals); err != nil {
+	// 	log.Fatal(errors.Wrap(err, "failed parsing --set data"))
+	// }
 
 	// Check chart dependencies to make sure all are present in /charts
 	chartRequested, err := loader.Load(cp)
@@ -218,9 +221,29 @@ func InstallChart(name, repo, chart string, args map[string]string) {
 	client.Namespace = settings.Namespace()
 	release, err := client.Run(chartRequested, vals)
 	if err != nil {
+		if err.Error() == "cannot re-use a name that is still in use" {
+			fmt.Println("already installed")
+		} else {
+			log.Fatal(err)
+		}
+	} else {
+		fmt.Println(release.Manifest)
+	}
+}
+func UnInstallChart(name string) {
+	settings.KubeConfig = "/home/sondx/.kube/config"
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(release.Manifest)
+	client := action.NewUninstall(actionConfig)
+	_, err := client.Run(name)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	fmt.Printf("Release %s has been uninstalled\n", name)
+
 }
 
 func isChartInstallable(ch *chart.Chart) (bool, error) {

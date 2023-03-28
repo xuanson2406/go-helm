@@ -1,4 +1,4 @@
-module github.com/PrasadG193/helm-clientgo-example
+module github.com/xuanson2406/helm-clientgo-example
 
 go 1.13
 
