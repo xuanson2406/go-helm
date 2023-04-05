@@ -17,8 +17,9 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/gofrs/flock"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/pkg/errors"
-
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -30,28 +31,46 @@ import (
 )
 
 var settings *cli.EnvSettings
+var err error
 
 var (
+	// url1        = "https://registry.fke.fptcloud.com/chartrepo/xplat-fke"
 	url1        = "https://xuanson2406.github.io/library_API/charts"
 	repoName    = "sondx12"
 	chartName   = "helm"
-	releaseName = "sondx12-dev"
-	namespace   = "mysql-test"
+	releaseName = "sondx12"
+	namespace   = "helm"
 	args        = map[string]string{
 		// comma seperated values to set
-		"set": "mysqlRootPassword=admin@123,persistence.enabled=false,imagePullPolicy=Always",
+		"set": "database.volume.storageClassName=vsan-default-storage-policy,imagePullPolicy=Always",
+	}
+	clusterName = "llbo913r"
+	credential  = map[string]string{
+		"endPoint":        "s3-stg09.fptcloud.net",
+		"accessKeyID":     "00da3ac6e85660b4e9c7",
+		"secretAccessKey": "hKPSk+kfUs3STgF0kF3H/Pt4CQ1U4fOMkWq8jNft",
+		"bucketName":      "kubeconfig",
 	}
 )
 
 func main() {
+
 	os.Setenv("HELM_NAMESPACE", namespace)
 	settings = cli.New()
+	// settings.KubeConfig, err = downloadKubecfg(clusterName, credential)
+	// if err != nil {
+	// 	fmt.Printf("Can not download file kubeconfig of cluster %s: %v", clusterName, err)
+	// }
+	settings.KubeConfig = "/home/sondx/.kube/config"
 	// Add helm repo
 	RepoAdd(repoName, url1)
+
 	// Update charts from the helm repo
 	RepoUpdate()
+
 	// Install charts
 	InstallChart(releaseName, repoName, chartName, args)
+
 	// UnInstall charts
 	// UnInstallChart(releaseName)
 }
@@ -152,7 +171,6 @@ func RepoUpdate() {
 
 // InstallChart
 func InstallChart(name, repo, chart string, args map[string]string) {
-	settings.KubeConfig = "/home/sondx/.kube/config"
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
 		log.Fatal(err)
@@ -164,6 +182,8 @@ func InstallChart(name, repo, chart string, args map[string]string) {
 	}
 	//name, chart, err := client.NameAndChart(args)
 	client.ReleaseName = name
+	client.CreateNamespace = true
+
 	cp, err := client.ChartPathOptions.LocateChart(fmt.Sprintf("%s/%s", repo, chart), settings)
 	if err != nil {
 		log.Fatal(err)
@@ -231,7 +251,6 @@ func InstallChart(name, repo, chart string, args map[string]string) {
 	}
 }
 func UnInstallChart(name string) {
-	settings.KubeConfig = "/home/sondx/.kube/config"
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
 		log.Fatal(err)
@@ -257,4 +276,22 @@ func isChartInstallable(ch *chart.Chart) (bool, error) {
 func debug(format string, v ...interface{}) {
 	format = fmt.Sprintf("[debug] %s\n", format)
 	log.Output(2, fmt.Sprintf(format, v...))
+}
+func downloadKubecfg(name string, credential map[string]string) (string, error) {
+	ctx := context.Background()
+	minioClient, err := minio.New(credential["endPoint"], &minio.Options{
+		Creds:  credentials.NewStaticV4(credential["accessKeyID"], credential["secretAccessKey"], ""),
+		Secure: true,
+		Region: "us-east-1",
+	})
+	if err != nil {
+		return "", err
+	}
+	pathDownload := "kubecfg/" + name
+	objectName := name + "-kubeconfig"
+	err = minioClient.FGetObject(ctx, credential["bucketName"], objectName, pathDownload, minio.GetObjectOptions{})
+	if err != nil {
+		return "", err
+	}
+	return pathDownload, nil
 }
