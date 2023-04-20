@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v2"
+	"k8s.io/helm/pkg/strvals"
 
 	"github.com/gofrs/flock"
 	"github.com/minio/minio-go/v7"
@@ -34,15 +35,18 @@ var settings *cli.EnvSettings
 var err error
 
 var (
-	// url1        = "https://registry.fke.fptcloud.com/chartrepo/xplat-fke"
-	url1        = "https://xuanson2406.github.io/library_API/charts"
-	repoName    = "sondx12"
-	chartName   = "helm"
-	releaseName = "sondx12"
-	namespace   = "helm"
-	args        = map[string]string{
+	url1 = "https://registry.fke.fptcloud.com/chartrepo/xplat-fke"
+	// url1        = "https://xuanson2406.github.io/library_API/charts"
+	repoName           = "xplat-fke"
+	chartName          = "gpu-operator"
+	releaseName        = "operator"
+	namespace          = "gpu-operator"
+	prometheus_service = "prometheus-stack-kube-prom-prometheus"
+	args               = map[string]string{
 		// comma seperated values to set
-		"set": "database.volume.storageClassName=vsan-default-storage-policy,imagePullPolicy=Always",
+		// "set": "database.volume.storageClassName=vsan-default-storage-policy,imagePullPolicy=Always",
+		"set": "prometheus.url=http://" + prometheus_service + ".prometheus.svc.fke-demo-lab2",
+		// "set": "mig.strategy=mixed",
 	}
 	clusterName = "llbo913r"
 	credential  = map[string]string{
@@ -51,17 +55,18 @@ var (
 		"secretAccessKey": "hKPSk+kfUs3STgF0kF3H/Pt4CQ1U4fOMkWq8jNft",
 		"bucketName":      "kubeconfig",
 	}
+	strategy = "mixed"
 )
 
 func main() {
 
-	os.Setenv("HELM_NAMESPACE", namespace)
+	// os.Setenv("HELM_NAMESPACE", namespace)
 	settings = cli.New()
 	// settings.KubeConfig, err = downloadKubecfg(clusterName, credential)
 	// if err != nil {
 	// 	fmt.Printf("Can not download file kubeconfig of cluster %s: %v", clusterName, err)
 	// }
-	settings.KubeConfig = "/home/sondx/.kube/config"
+	settings.KubeConfig = "/home/sondx/.kube/shoot-config"
 	// Add helm repo
 	RepoAdd(repoName, url1)
 
@@ -69,10 +74,42 @@ func main() {
 	RepoUpdate()
 
 	// Install charts
-	InstallChart(releaseName, repoName, chartName, args)
+	// InstallChart(releaseName, repoName, chartName, args)
 
+	// Install GPU Operator
+	// os.Setenv("HELM_NAMESPACE", "gpu-operator")
+	// err := InstallChart(releaseName, repoName, chartName, args)
+	// if err != nil {
+	// 	fmt.Printf("Unable to install chart gpu-operator: %v", err)
+	// } else {
+	// 	fmt.Println("Successfully install chart gpu-operator")
+	// 	time.Sleep(40 * time.Second)
+	// }
+
+	// Install kube-prometheus-stack
+	// releaseNameStack := "prometheus-stack"
+	// os.Setenv("HELM_NAMESPACE", "prometheus")
+	// err = InstallChart("prometheus-stack", repoName, "kube-prometheus-stack", nil, "prometheus")
+	// if err != nil {
+	// 	fmt.Printf("Unable to install chart kube-prometheus-stack: %v", err)
+	// } else {
+	// 	fmt.Println("Successfully install chart kube-prometheus-stack")
+	// 	time.Sleep(40 * time.Second)
+	// }
+
+	// Install prometheus-adapter
+	// releaseNameAdapter := "prometheus-adapter"
+	// value = "prometheus.url=http://" + releaseNameStack + prometheus_service + ".prometheus.svc.cluster.local"
+	// err = InstallChart("prometheus-adapter", repoName, "prometheus-adapter", args, "prometheus")
+	// if err != nil {
+	// 	fmt.Printf("Unable to install chart prometheus-adapter: %v", err)
+	// } else {
+	// 	fmt.Println("Successfully install chart prometheus-adapter")
+	// 	time.Sleep(40 * time.Second)
+	// }
 	// UnInstall charts
-	// UnInstallChart(releaseName)
+	UnInstallChart("prometheus-stack")
+	// UnInstallChart(releaseNameAdapter)
 }
 
 // RepoAdd adds repo with given name and url
@@ -170,10 +207,11 @@ func RepoUpdate() {
 }
 
 // InstallChart
-func InstallChart(name, repo, chart string, args map[string]string) {
+func InstallChart(name, repo, chart string, args map[string]string, namespace string) error {
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
-		log.Fatal(err)
+		// log.Fatal(err)
+		return err
 	}
 	client := action.NewInstall(actionConfig)
 
@@ -186,7 +224,8 @@ func InstallChart(name, repo, chart string, args map[string]string) {
 
 	cp, err := client.ChartPathOptions.LocateChart(fmt.Sprintf("%s/%s", repo, chart), settings)
 	if err != nil {
-		log.Fatal(err)
+		// log.Fatal(err)
+		return err
 	}
 
 	debug("CHART PATH: %s\n", cp)
@@ -195,23 +234,29 @@ func InstallChart(name, repo, chart string, args map[string]string) {
 	valueOpts := &values.Options{}
 	vals, err := valueOpts.MergeValues(p)
 	if err != nil {
-		log.Fatal(err)
+		// log.Fatal(err)
+		return err
 	}
 
 	// Add args
-	// if err := strvals.ParseInto(args["set"], vals); err != nil {
-	// 	log.Fatal(errors.Wrap(err, "failed parsing --set data"))
-	// }
+	if args != nil {
+		if err := strvals.ParseInto(args["set"], vals); err != nil {
+			log.Fatal(errors.Wrap(err, "failed parsing --set data"))
+			return err
+		}
+	}
 
 	// Check chart dependencies to make sure all are present in /charts
 	chartRequested, err := loader.Load(cp)
 	if err != nil {
-		log.Fatal(err)
+		// log.Fatal(err)
+		return err
 	}
 
 	validInstallableChart, err := isChartInstallable(chartRequested)
 	if !validInstallableChart {
-		log.Fatal(err)
+		// log.Fatal(err)
+		return err
 	}
 
 	if req := chartRequested.Metadata.Dependencies; req != nil {
@@ -230,25 +275,29 @@ func InstallChart(name, repo, chart string, args map[string]string) {
 					RepositoryCache:  settings.RepositoryCache,
 				}
 				if err := man.Update(); err != nil {
-					log.Fatal(err)
+					// log.Fatal(err)
+					return err
 				}
 			} else {
-				log.Fatal(err)
+				// log.Fatal(err)
+				return err
 			}
 		}
 	}
 
-	client.Namespace = settings.Namespace()
+	client.Namespace = namespace
 	release, err := client.Run(chartRequested, vals)
 	if err != nil {
 		if err.Error() == "cannot re-use a name that is still in use" {
 			fmt.Println("already installed")
 		} else {
-			log.Fatal(err)
+			// log.Fatal(err)
+			return err
 		}
 	} else {
 		fmt.Println(release.Manifest)
 	}
+	return nil
 }
 func UnInstallChart(name string) {
 	actionConfig := new(action.Configuration)
@@ -295,3 +344,91 @@ func downloadKubecfg(name string, credential map[string]string) (string, error) 
 	}
 	return pathDownload, nil
 }
+
+// func installChart(value string, repoName string, chartName string, releaseName string, namespace string) error {
+// 	actionConfig := new(action.Configuration)
+// 	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), debug); err != nil {
+// 		log.Fatal(err)
+// 	}
+// 	client := action.NewInstall(actionConfig)
+
+// 	if client.Version == "" && client.Devel {
+// 		client.Version = ">0.0.0-0"
+// 	}
+// 	//name, chart, err := client.NameAndChart(args)
+// 	client.ReleaseName = releaseName
+// 	client.CreateNamespace = true
+// 	// client.Wait = true
+// 	client.Namespace = namespace
+
+// 	cp, err := client.ChartPathOptions.LocateChart(fmt.Sprintf("%s/%s", repoName, chartName), settings)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	debug("CHART PATH: %s\n", cp)
+
+// 	p := getter.All(settings)
+// 	valueOpts := &values.Options{}
+// 	vals, err := valueOpts.MergeValues(p)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// Add args
+// 	if value != "" {
+// 		args := map[string]string{
+// 			"set": value,
+// 		}
+// 		if err := strvals.ParseInto(args["set"], vals); err != nil {
+// 			return errors.Wrap(err, "failed parsing --set data")
+// 		}
+// 	}
+
+// 	// Check chart dependencies to make sure all are present in /charts
+// 	chartRequested, err := loader.Load(cp)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	validInstallableChart, err := isChartInstallable(chartRequested)
+// 	if !validInstallableChart {
+// 		return err
+// 	}
+
+// 	if req := chartRequested.Metadata.Dependencies; req != nil {
+// 		// If CheckDependencies returns an error, we have unfulfilled dependencies.
+// 		// As of Helm 2.4.0, this is treated as a stopping condition:
+// 		// https://github.com/helm/helm/issues/2209
+// 		if err := action.CheckDependencies(chartRequested, req); err != nil {
+// 			if client.DependencyUpdate {
+// 				man := &downloader.Manager{
+// 					Out:              os.Stdout,
+// 					ChartPath:        cp,
+// 					Keyring:          client.ChartPathOptions.Keyring,
+// 					SkipUpdate:       false,
+// 					Getters:          p,
+// 					RepositoryConfig: settings.RepositoryConfig,
+// 					RepositoryCache:  settings.RepositoryCache,
+// 				}
+// 				if err := man.Update(); err != nil {
+// 					return err
+// 				}
+// 			} else {
+// 				return err
+// 			}
+// 		}
+// 	}
+
+// 	_, err = client.Run(chartRequested, vals)
+// 	if err != nil {
+// 		if err.Error() == "cannot re-use a name that is still in use" {
+// 			return fmt.Errorf("already installed")
+// 		} else {
+// 			return err
+// 		}
+// 	} else {
+// 		// fmt.Println(release.Manifest)
+// 		return nil
+// 	}
+// }

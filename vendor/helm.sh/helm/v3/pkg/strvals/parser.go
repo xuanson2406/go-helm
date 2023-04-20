@@ -17,9 +17,13 @@ package strvals
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/pkg/errors"
 	"sigs.k8s.io/yaml"
@@ -27,6 +31,14 @@ import (
 
 // ErrNotList indicates that a non-list was treated as a list.
 var ErrNotList = errors.New("not a list")
+
+// MaxIndex is the maximum index that will be allowed by setIndex.
+// The default value 65536 = 1024 * 64
+var MaxIndex = 65536
+
+// MaxNestedNameLevel is the maximum level of nesting for a value name that
+// will be allowed.
+var MaxNestedNameLevel = 30
 
 // ToYAML takes a string of arguments and converts to a YAML document.
 func ToYAML(s string) (string, error) {
@@ -93,6 +105,18 @@ func ParseIntoString(s string, dest map[string]interface{}) error {
 	return t.parse()
 }
 
+// ParseJSON parses a string with format key1=val1, key2=val2, ...
+// where values are json strings (null, or scalars, or arrays, or objects).
+// An empty val is treated as null.
+//
+// If a key exists in dest, the new value overwrites the dest version.
+//
+func ParseJSON(s string, dest map[string]interface{}) error {
+	scanner := bytes.NewBufferString(s)
+	t := newJSONParser(scanner, dest)
+	return t.parse()
+}
+
 // ParseIntoFile parses a filevals line and merges the result into dest.
 //
 // This method always returns a string as the value.
@@ -112,9 +136,10 @@ type RunesValueReader func([]rune) (interface{}, error)
 // where sc is the source of the original data being parsed
 // where data is the final parsed data from the parses with correct types
 type parser struct {
-	sc     *bytes.Buffer
-	data   map[string]interface{}
-	reader RunesValueReader
+	sc        *bytes.Buffer
+	data      map[string]interface{}
+	reader    RunesValueReader
+	isjsonval bool
 }
 
 func newParser(sc *bytes.Buffer, data map[string]interface{}, stringBool bool) *parser {
@@ -124,13 +149,17 @@ func newParser(sc *bytes.Buffer, data map[string]interface{}, stringBool bool) *
 	return &parser{sc: sc, data: data, reader: stringConverter}
 }
 
+func newJSONParser(sc *bytes.Buffer, data map[string]interface{}) *parser {
+	return &parser{sc: sc, data: data, reader: nil, isjsonval: true}
+}
+
 func newFileParser(sc *bytes.Buffer, data map[string]interface{}, reader RunesValueReader) *parser {
 	return &parser{sc: sc, data: data, reader: reader}
 }
 
 func (t *parser) parse() error {
 	for {
-		err := t.key(t.data)
+		err := t.key(t.data, 0)
 		if err == nil {
 			continue
 		}
@@ -149,7 +178,12 @@ func runeSet(r []rune) map[rune]bool {
 	return s
 }
 
-func (t *parser) key(data map[string]interface{}) error {
+func (t *parser) key(data map[string]interface{}, nestedNameLevel int) (reterr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			reterr = fmt.Errorf("unable to parse key: %s", r)
+		}
+	}()
 	stop := runeSet([]rune{'=', '[', ',', '.'})
 	for {
 		switch k, last, err := runesUntil(t.sc, stop); {
@@ -174,10 +208,37 @@ func (t *parser) key(data map[string]interface{}) error {
 			}
 
 			// Now we need to get the value after the ].
-			list, err = t.listItem(list, i)
+			list, err = t.listItem(list, i, nestedNameLevel)
 			set(data, kk, list)
 			return err
 		case last == '=':
+			if t.isjsonval {
+				empval, err := t.emptyVal()
+				if err != nil {
+					return err
+				}
+				if empval {
+					set(data, string(k), nil)
+					return nil
+				}
+				// parse jsonvals by using Go’s JSON standard library
+				// Decode is preferred to Unmarshal in order to parse just the json parts of the list key1=jsonval1,key2=jsonval2,...
+				// Since Decode has its own buffer that consumes more characters (from underlying t.sc) than the ones actually decoded,
+				// we invoke Decode on a separate reader built with a copy of what is left in t.sc. After Decode is executed, we
+				// discard in t.sc the chars of the decoded json value (the number of those characters is returned by InputOffset).
+				var jsonval interface{}
+				dec := json.NewDecoder(strings.NewReader(t.sc.String()))
+				if err = dec.Decode(&jsonval); err != nil {
+					return err
+				}
+				set(data, string(k), jsonval)
+				if _, err = io.CopyN(ioutil.Discard, t.sc, dec.InputOffset()); err != nil {
+					return err
+				}
+				// skip possible blanks and comma
+				_, err = t.emptyVal()
+				return err
+			}
 			//End of key. Consume =, Get value.
 			// FIXME: Get value list first
 			vl, e := t.valList()
@@ -199,12 +260,17 @@ func (t *parser) key(data map[string]interface{}) error {
 			default:
 				return e
 			}
-
 		case last == ',':
 			// No value given. Set the value to empty string. Return error.
 			set(data, string(k), "")
 			return errors.Errorf("key %q has no value (cannot end with ,)", string(k))
 		case last == '.':
+			// Check value name is within the maximum nested name level
+			nestedNameLevel++
+			if nestedNameLevel > MaxNestedNameLevel {
+				return fmt.Errorf("value name nested level is greater than maximum supported nested level of %d", MaxNestedNameLevel)
+			}
+
 			// First, create or find the target map.
 			inner := map[string]interface{}{}
 			if _, ok := data[string(k)]; ok {
@@ -212,11 +278,13 @@ func (t *parser) key(data map[string]interface{}) error {
 			}
 
 			// Recurse
-			e := t.key(inner)
-			if len(inner) == 0 {
+			e := t.key(inner, nestedNameLevel)
+			if e == nil && len(inner) == 0 {
 				return errors.Errorf("key map %q has no value", string(k))
 			}
-			set(data, string(k), inner)
+			if len(inner) != 0 {
+				set(data, string(k), inner)
+			}
 			return e
 		}
 	}
@@ -230,14 +298,29 @@ func set(data map[string]interface{}, key string, val interface{}) {
 	data[key] = val
 }
 
-func setIndex(list []interface{}, index int, val interface{}) []interface{} {
+func setIndex(list []interface{}, index int, val interface{}) (l2 []interface{}, err error) {
+	// There are possible index values that are out of range on a target system
+	// causing a panic. This will catch the panic and return an error instead.
+	// The value of the index that causes a panic varies from system to system.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("error processing index %d: %s", index, r)
+		}
+	}()
+
+	if index < 0 {
+		return list, fmt.Errorf("negative %d index not allowed", index)
+	}
+	if index > MaxIndex {
+		return list, fmt.Errorf("index of %d is greater than maximum supported index of %d", index, MaxIndex)
+	}
 	if len(list) <= index {
 		newlist := make([]interface{}, index+1)
 		copy(newlist, list)
 		list = newlist
 	}
 	list[index] = val
-	return list
+	return list, nil
 }
 
 func (t *parser) keyIndex() (int, error) {
@@ -251,7 +334,10 @@ func (t *parser) keyIndex() (int, error) {
 	return strconv.Atoi(string(v))
 
 }
-func (t *parser) listItem(list []interface{}, i int) ([]interface{}, error) {
+func (t *parser) listItem(list []interface{}, i, nestedNameLevel int) ([]interface{}, error) {
+	if i < 0 {
+		return list, fmt.Errorf("negative %d index not allowed", i)
+	}
 	stop := runeSet([]rune{'[', '.', '='})
 	switch k, last, err := runesUntil(t.sc, stop); {
 	case len(k) > 0:
@@ -259,31 +345,73 @@ func (t *parser) listItem(list []interface{}, i int) ([]interface{}, error) {
 	case err != nil:
 		return list, err
 	case last == '=':
+		if t.isjsonval {
+			empval, err := t.emptyVal()
+			if err != nil {
+				return list, err
+			}
+			if empval {
+				return setIndex(list, i, nil)
+			}
+			// parse jsonvals by using Go’s JSON standard library
+			// Decode is preferred to Unmarshal in order to parse just the json parts of the list key1=jsonval1,key2=jsonval2,...
+			// Since Decode has its own buffer that consumes more characters (from underlying t.sc) than the ones actually decoded,
+			// we invoke Decode on a separate reader built with a copy of what is left in t.sc. After Decode is executed, we
+			// discard in t.sc the chars of the decoded json value (the number of those characters is returned by InputOffset).
+			var jsonval interface{}
+			dec := json.NewDecoder(strings.NewReader(t.sc.String()))
+			if err = dec.Decode(&jsonval); err != nil {
+				return list, err
+			}
+			if list, err = setIndex(list, i, jsonval); err != nil {
+				return list, err
+			}
+			if _, err = io.CopyN(ioutil.Discard, t.sc, dec.InputOffset()); err != nil {
+				return list, err
+			}
+			// skip possible blanks and comma
+			_, err = t.emptyVal()
+			return list, err
+		}
 		vl, e := t.valList()
 		switch e {
 		case nil:
-			return setIndex(list, i, vl), nil
+			return setIndex(list, i, vl)
 		case io.EOF:
-			return setIndex(list, i, ""), err
+			return setIndex(list, i, "")
 		case ErrNotList:
 			rs, e := t.val()
 			if e != nil && e != io.EOF {
 				return list, e
 			}
 			v, e := t.reader(rs)
-			return setIndex(list, i, v), e
+			if e != nil {
+				return list, e
+			}
+			return setIndex(list, i, v)
 		default:
 			return list, e
 		}
 	case last == '[':
 		// now we have a nested list. Read the index and handle.
-		i, err := t.keyIndex()
+		nextI, err := t.keyIndex()
 		if err != nil {
 			return list, errors.Wrap(err, "error parsing index")
 		}
+		var crtList []interface{}
+		if len(list) > i {
+			// If nested list already exists, take the value of list to next cycle.
+			existed := list[i]
+			if existed != nil {
+				crtList = list[i].([]interface{})
+			}
+		}
 		// Now we need to get the value after the ].
-		list2, err := t.listItem(list, i)
-		return setIndex(list, i, list2), err
+		list2, err := t.listItem(crtList, nextI, nestedNameLevel)
+		if err != nil {
+			return list, err
+		}
+		return setIndex(list, i, list2)
 	case last == '.':
 		// We have a nested object. Send to t.key
 		inner := map[string]interface{}{}
@@ -298,10 +426,35 @@ func (t *parser) listItem(list []interface{}, i int) ([]interface{}, error) {
 		}
 
 		// Recurse
-		e := t.key(inner)
-		return setIndex(list, i, inner), e
+		e := t.key(inner, nestedNameLevel)
+		if e != nil {
+			return list, e
+		}
+		return setIndex(list, i, inner)
 	default:
 		return nil, errors.Errorf("parse error: unexpected token %v", last)
+	}
+}
+
+// check for an empty value
+// read and consume optional spaces until comma or EOF (empty val) or any other char (not empty val)
+// comma and spaces are consumed, while any other char is not cosumed
+func (t *parser) emptyVal() (bool, error) {
+	for {
+		r, _, e := t.sc.ReadRune()
+		if e == io.EOF {
+			return true, nil
+		}
+		if e != nil {
+			return false, e
+		}
+		if r == ',' {
+			return true, nil
+		}
+		if !unicode.IsSpace(r) {
+			t.sc.UnreadRune()
+			return false, nil
+		}
 	}
 }
 

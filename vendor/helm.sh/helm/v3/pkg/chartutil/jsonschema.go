@@ -39,10 +39,10 @@ func ValidateAgainstSchema(chrt *chart.Chart, values map[string]interface{}) err
 		}
 	}
 
-	// For each dependency, recurively call this function with the coalesced values
-	for _, subchrt := range chrt.Dependencies() {
-		subchrtValues := values[subchrt.Name()].(map[string]interface{})
-		if err := ValidateAgainstSchema(subchrt, subchrtValues); err != nil {
+	// For each dependency, recursively call this function with the coalesced values
+	for _, subchart := range chrt.Dependencies() {
+		subchartValues := values[subchart.Name()].(map[string]interface{})
+		if err := ValidateAgainstSchema(subchart, subchartValues); err != nil {
 			sb.WriteString(err.Error())
 		}
 	}
@@ -55,7 +55,13 @@ func ValidateAgainstSchema(chrt *chart.Chart, values map[string]interface{}) err
 }
 
 // ValidateAgainstSingleSchema checks that values does not violate the structure laid out in this schema
-func ValidateAgainstSingleSchema(values Values, schemaJSON []byte) error {
+func ValidateAgainstSingleSchema(values Values, schemaJSON []byte) (reterr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			reterr = fmt.Errorf("unable to validate schema: %s", r)
+		}
+	}()
+
 	valuesData, err := yaml.Marshal(values)
 	if err != nil {
 		return err

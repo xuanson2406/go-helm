@@ -23,10 +23,10 @@ import (
 	"text/template"
 	"unicode"
 
-	"k8s.io/kubectl/pkg/util/term"
-
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
+
+	"k8s.io/kubectl/pkg/util/term"
 )
 
 type FlagExposer interface {
@@ -44,6 +44,8 @@ func ActsAsRootCommand(cmd *cobra.Command, filters []string, groups ...CommandGr
 		CommandGroups: groups,
 		Filtered:      filters,
 	}
+	cmd.SetFlagErrorFunc(templater.FlagErrorFunc())
+	cmd.SilenceUsage = true
 	cmd.SetUsageFunc(templater.UsageFunc())
 	cmd.SetHelpFunc(templater.HelpFunc())
 	return templater
@@ -64,6 +66,18 @@ type templater struct {
 	RootCmd       *cobra.Command
 	CommandGroups
 	Filtered []string
+}
+
+func (templater *templater) FlagErrorFunc(exposedFlags ...string) func(*cobra.Command, error) error {
+	return func(c *cobra.Command, err error) error {
+		c.SilenceUsage = true
+		switch c.CalledAs() {
+		case "options":
+			return fmt.Errorf("%s\nRun '%s' without flags.", err, c.CommandPath())
+		default:
+			return fmt.Errorf("%s\nSee '%s --help' for usage.", err, c.CommandPath())
+		}
+	}
 }
 
 func (templater *templater) ExposeFlags(cmd *cobra.Command, flags ...string) FlagExposer {
@@ -146,7 +160,7 @@ func (t *templater) cmdGroupsString(c *cobra.Command) string {
 		cmds := []string{cmdGroup.Message}
 		for _, cmd := range cmdGroup.Commands {
 			if cmd.IsAvailableCommand() {
-				cmds = append(cmds, "  "+rpad(cmd.Name(), cmd.NamePadding())+" "+cmd.Short)
+				cmds = append(cmds, "  "+rpad(cmd.Name(), cmd.NamePadding())+"   "+cmd.Short)
 			}
 		}
 		groups = append(groups, strings.Join(cmds, "\n"))
@@ -204,29 +218,40 @@ func (t *templater) usageLine(c *cobra.Command) string {
 	return usage
 }
 
-func flagsUsages(f *flag.FlagSet) string {
-	x := new(bytes.Buffer)
+// flagsUsages will print out the kubectl help flags
+func flagsUsages(f *flag.FlagSet) (string, error) {
+	flagBuf := new(bytes.Buffer)
+	wrapLimit, err := term.GetWordWrapperLimit()
+	if err != nil {
+		wrapLimit = 0
+	}
+	printer := NewHelpFlagPrinter(flagBuf, wrapLimit)
 
 	f.VisitAll(func(flag *flag.Flag) {
 		if flag.Hidden {
 			return
 		}
-		format := "--%s=%s: %s\n"
-
-		if flag.Value.Type() == "string" {
-			format = "--%s='%s': %s\n"
-		}
-
-		if len(flag.Shorthand) > 0 {
-			format = "  -%s, " + format
-		} else {
-			format = "   %s   " + format
-		}
-
-		fmt.Fprintf(x, format, flag.Shorthand, flag.Name, flag.DefValue, flag.Usage)
+		printer.PrintHelpFlag(flag)
 	})
 
-	return x.String()
+	return flagBuf.String(), nil
+}
+
+// getFlagFormat will output the flag format
+func getFlagFormat(f *flag.Flag) string {
+	var format string
+	format = "--%s=%s:\n%s%s"
+	if f.Value.Type() == "string" {
+		format = "--%s='%s':\n%s%s"
+	}
+
+	if len(f.Shorthand) > 0 {
+		format = "    -%s, " + format
+	} else {
+		format = "    %s" + format
+	}
+
+	return format
 }
 
 func rpad(s string, padding int) string {
