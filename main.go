@@ -4,7 +4,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -14,13 +16,11 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v2"
-	"k8s.io/helm/pkg/strvals"
-
 	"github.com/gofrs/flock"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/pkg/errors"
+	"gopkg.in/yaml.v2"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -29,6 +29,15 @@ import (
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
+	"k8s.io/helm/pkg/strvals"
 )
 
 var settings *cli.EnvSettings
@@ -59,19 +68,127 @@ var (
 )
 
 func main() {
+	config, err := buildConfig("target-kubeconfig.yaml")
+	if err != nil {
+		log.Fatalf("Error building kubeconfig: %v", err)
+	}
+	// config, err := rest.InClusterConfig()
+	// if err != nil {
+	// 	// If running outside the cluster, use kubeconfig file
+	// 	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "target-kubeconfig.yaml ")
+	// 	config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	// 	if err != nil {
+	// 		log.Fatalf("Failed to build Kubernetes client configuration: %v", err)
+	// 	}
+	// }
+	// clientset, err := kubernetes.NewForConfig(config)
+	// if err != nil {
+	// 	log.Fatalf("Error building kubernetes clientset: %v", err)
+	// }
+	// yamlFile, err := os.ReadFile("/home/sondx12/xuanson2406/job.json")
+	// if err != nil {
+	// 	panic(err.Error())
+	// }
+	// // Decode the YAML file into a Pod object
+	// job := batchv1.Job{}
+	// if err := json.Unmarshal(yamlFile, &job); err != nil {
+	// 	panic(err.Error())
+	// }
+	// // Create the Job
+	// fmt.Println("Creating Job...")
+	// fmt.Printf("name: %s\nrestartPolicy: %s", job.Name, job.Spec.Template.Spec.RestartPolicy)
+	// result, err := clientset.BatchV1().Jobs("kube-system").Create(context.TODO(), &job, metav1.CreateOptions{})
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// fmt.Printf("Created Job %q.\n", result.GetObjectMeta().GetName())
+
+	// Read the YAML file
+	filePath := "/home/sondx12/xuanson2406/crd2.yaml"
+	crdYaml, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		fmt.Printf("Error reading YAML file: %v\n", err)
+		os.Exit(1)
+	}
+	// Convert []byte to io.Reader
+	crdReader := bytes.NewReader(crdYaml)
+	// Decode the YAML into an unstructured object
+	// dec := yaml.New(unstructured.UnstructuredJSONScheme)
+	obj := &unstructured.Unstructured{}
+	decoder := k8syaml.NewYAMLOrJSONDecoder(crdReader, 10000)
+	if err := decoder.Decode(obj); err != nil {
+		fmt.Printf("Error decoding YAML: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Apply the CRD to the cluster
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		fmt.Printf("Error creating dynamic client: %v\n", err)
+		os.Exit(1)
+	}
+
+	gvr := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+
+	// Use the dynamic client to create or update the CRD
+	_, err = dynamicClient.Resource(gvr).Create(context.Background(), obj, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Printf("Error applying CRD: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("CRD applied successfully!")
+
+	// nodeName := "fke-check125-lhogmw2l-worker-1y886uoh-5cb89-xxhr8"
+	// node, _ := clientset.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	// if node.Labels["worker.fptcloud/system-components"] != "true" {
+	// 	fmt.Printf("true")
+	// }
+	// os.Setenv("HELM_NAMESPACE", "gpu-operator")
+	// settings := cli.New()
+	// settings.KubeConfig = "/home/sondx12/go/src/github.com/xuanson2406/go-helm/kubecfg/test.yaml"
+	// actionConfig := new(action.Configuration)
+
+	// err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), log.Printf)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// // Load the Helm chart from the specified path
+	// chartPath := "/home/sondx12/go/src/github.com/xuanson2406/go-helm/gpu-operator"
+	// chart, err := loader.Load(chartPath)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// // Use actionConfig to perform Helm operations
+	// // For example, you can install a Helm chart:
+	// installChart := action.NewInstall(actionConfig)
+	// installChart.Namespace = "gpu-operator"
+	// installChart.ReleaseName = "sondx12"
+	// installChart.CreateNamespace = true
+
+	// _, err = installChart.Run(chart, nil)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// fmt.Println("Helm chart installed successfully!")
 
 	// os.Setenv("HELM_NAMESPACE", namespace)
-	settings = cli.New()
 	// settings.KubeConfig, err = downloadKubecfg(clusterName, credential)
 	// if err != nil {
 	// 	fmt.Printf("Can not download file kubeconfig of cluster %s: %v", clusterName, err)
 	// }
-	settings.KubeConfig = "/home/sondx/.kube/shoot-config"
+	// settings.KubeConfig = "/home/sondx/.kube/shoot-config"
 	// Add helm repo
-	RepoAdd(repoName, url1)
+	// RepoAdd(repoName, url1)
 
 	// Update charts from the helm repo
-	RepoUpdate()
+	// RepoUpdate()
 
 	// Install charts
 	// InstallChart(releaseName, repoName, chartName, args)
@@ -108,7 +225,7 @@ func main() {
 	// 	time.Sleep(40 * time.Second)
 	// }
 	// UnInstall charts
-	UnInstallChart("prometheus-stack")
+	// UnInstallChart(settings, "sondx12")
 	// UnInstallChart(releaseNameAdapter)
 }
 
@@ -299,7 +416,7 @@ func InstallChart(name, repo, chart string, args map[string]string, namespace st
 	}
 	return nil
 }
-func UnInstallChart(name string) {
+func UnInstallChart(settings *cli.EnvSettings, name string) {
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
 		log.Fatal(err)
@@ -343,6 +460,23 @@ func downloadKubecfg(name string, credential map[string]string) (string, error) 
 		return "", err
 	}
 	return pathDownload, nil
+}
+func buildConfig(kubeconfigFile string) (*rest.Config, error) {
+	var kubeconfig *string
+	if home := homedir.HomeDir(); home != "" {
+		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", kubeconfigFile), "Path to the kubeconfig file")
+	} else {
+		kubeconfig = flag.String("kubeconfig", "", "Path to the kubeconfig file")
+	}
+	flag.Parse()
+
+	if *kubeconfig == "" {
+		if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+			return rest.InClusterConfig()
+		}
+	}
+
+	return clientcmd.BuildConfigFromFlags("", *kubeconfig)
 }
 
 // func installChart(value string, repoName string, chartName string, releaseName string, namespace string) error {
