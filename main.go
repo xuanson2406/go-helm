@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -29,11 +28,6 @@ import (
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
@@ -44,17 +38,22 @@ var settings *cli.EnvSettings
 var err error
 
 var (
-	url1 = "https://registry.fke.fptcloud.com/chartrepo/xplat-fke"
-	// url1        = "https://xuanson2406.github.io/library_API/charts"
-	repoName           = "xplat-fke"
-	chartName          = "gpu-operator"
-	releaseName        = "operator"
-	namespace          = "gpu-operator"
+	// url1 = "https://registry.fke.fptcloud.com/chartrepo/xplat-fke"
+	url1 = "https://aquasecurity.github.io/helm-charts/"
+	// repoName           = "xplat-fke"
+	repoName = "aqua"
+	// chartName          = "gpu-operator"
+	chartName = "trivy-operator"
+	// releaseName        = "operator"
+	releaseName = "trivy-operator"
+	// namespace          = "gpu-operator"
+	namespace          = "trivy-system"
 	prometheus_service = "prometheus-stack-kube-prom-prometheus"
 	args               = map[string]string{
 		// comma seperated values to set
 		// "set": "database.volume.storageClassName=vsan-default-storage-policy,imagePullPolicy=Always",
-		"set": "prometheus.url=http://" + prometheus_service + ".prometheus.svc.fke-demo-lab2",
+		// "set": "prometheus.url=http://" + prometheus_service + ".prometheus.svc.fke-demo-lab2",
+		"set": "targetNamespaces=kube-system,kube-public,fptcloud-runtime-security,default",
 		// "set": "mig.strategy=mixed",
 	}
 	clusterName = "llbo913r"
@@ -68,10 +67,10 @@ var (
 )
 
 func main() {
-	config, err := buildConfig("target-kubeconfig.yaml")
-	if err != nil {
-		log.Fatalf("Error building kubeconfig: %v", err)
-	}
+	// config, err := buildConfig("target-kubeconfig.yaml")
+	// if err != nil {
+	// 	log.Fatalf("Error building kubeconfig: %v", err)
+	// }
 	// config, err := rest.InClusterConfig()
 	// if err != nil {
 	// 	// If running outside the cluster, use kubeconfig file
@@ -104,44 +103,44 @@ func main() {
 	// fmt.Printf("Created Job %q.\n", result.GetObjectMeta().GetName())
 
 	// Read the YAML file
-	filePath := "/home/sondx12/xuanson2406/crd2.yaml"
-	crdYaml, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		fmt.Printf("Error reading YAML file: %v\n", err)
-		os.Exit(1)
-	}
-	// Convert []byte to io.Reader
-	crdReader := bytes.NewReader(crdYaml)
-	// Decode the YAML into an unstructured object
-	// dec := yaml.New(unstructured.UnstructuredJSONScheme)
-	obj := &unstructured.Unstructured{}
-	decoder := k8syaml.NewYAMLOrJSONDecoder(crdReader, 10000)
-	if err := decoder.Decode(obj); err != nil {
-		fmt.Printf("Error decoding YAML: %v\n", err)
-		os.Exit(1)
-	}
+	// filePath := "/home/sondx12/xuanson2406/crd2.yaml"
+	// crdYaml, err := ioutil.ReadFile(filePath)
+	// if err != nil {
+	// 	fmt.Printf("Error reading YAML file: %v\n", err)
+	// 	os.Exit(1)
+	// }
+	// // Convert []byte to io.Reader
+	// crdReader := bytes.NewReader(crdYaml)
+	// // Decode the YAML into an unstructured object
+	// // dec := yaml.New(unstructured.UnstructuredJSONScheme)
+	// obj := &unstructured.Unstructured{}
+	// decoder := k8syaml.NewYAMLOrJSONDecoder(crdReader, 10000)
+	// if err := decoder.Decode(obj); err != nil {
+	// 	fmt.Printf("Error decoding YAML: %v\n", err)
+	// 	os.Exit(1)
+	// }
 
-	// Apply the CRD to the cluster
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		fmt.Printf("Error creating dynamic client: %v\n", err)
-		os.Exit(1)
-	}
+	// // Apply the CRD to the cluster
+	// dynamicClient, err := dynamic.NewForConfig(config)
+	// if err != nil {
+	// 	fmt.Printf("Error creating dynamic client: %v\n", err)
+	// 	os.Exit(1)
+	// }
 
-	gvr := schema.GroupVersionResource{
-		Group:    "apiextensions.k8s.io",
-		Version:  "v1",
-		Resource: "customresourcedefinitions",
-	}
+	// gvr := schema.GroupVersionResource{
+	// 	Group:    "apiextensions.k8s.io",
+	// 	Version:  "v1",
+	// 	Resource: "customresourcedefinitions",
+	// }
 
-	// Use the dynamic client to create or update the CRD
-	_, err = dynamicClient.Resource(gvr).Create(context.Background(), obj, metav1.CreateOptions{})
-	if err != nil {
-		fmt.Printf("Error applying CRD: %v\n", err)
-		os.Exit(1)
-	}
+	// // Use the dynamic client to create or update the CRD
+	// _, err = dynamicClient.Resource(gvr).Create(context.Background(), obj, metav1.CreateOptions{})
+	// if err != nil {
+	// 	fmt.Printf("Error applying CRD: %v\n", err)
+	// 	os.Exit(1)
+	// }
 
-	fmt.Println("CRD applied successfully!")
+	// fmt.Println("CRD applied successfully!")
 
 	// nodeName := "fke-check125-lhogmw2l-worker-1y886uoh-5cb89-xxhr8"
 	// node, _ := clientset.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
@@ -183,15 +182,18 @@ func main() {
 	// if err != nil {
 	// 	fmt.Printf("Can not download file kubeconfig of cluster %s: %v", clusterName, err)
 	// }
-	// settings.KubeConfig = "/home/sondx/.kube/shoot-config"
+	// settings.KubeConfig = "/home/sondx12/.kube/shoot-config"
+	kubeconfigFile := os.Getenv("HOME") + "/.kube/target-kubeconfig.yaml"
+	settings = CreateSetting("", kubeconfigFile)
 	// Add helm repo
-	// RepoAdd(repoName, url1)
+	RepoAdd(repoName, url1)
 
 	// Update charts from the helm repo
-	// RepoUpdate()
+	RepoUpdate()
 
 	// Install charts
-	// InstallChart(releaseName, repoName, chartName, args)
+	settings = CreateSetting(namespace, kubeconfigFile)
+	InstallChart(releaseName, repoName, chartName, namespace)
 
 	// Install GPU Operator
 	// os.Setenv("HELM_NAMESPACE", "gpu-operator")
@@ -227,6 +229,13 @@ func main() {
 	// UnInstall charts
 	// UnInstallChart(settings, "sondx12")
 	// UnInstallChart(releaseNameAdapter)
+}
+
+func CreateSetting(namespace string, kubeconfig string) *cli.EnvSettings {
+	os.Setenv("HELM_NAMESPACE", namespace)
+	settings := cli.New()
+	settings.KubeConfig = kubeconfig
+	return settings
 }
 
 // RepoAdd adds repo with given name and url
@@ -324,7 +333,7 @@ func RepoUpdate() {
 }
 
 // InstallChart
-func InstallChart(name, repo, chart string, args map[string]string, namespace string) error {
+func InstallChart(name, repo, chart string, namespace string) error {
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
 		// log.Fatal(err)
@@ -354,12 +363,25 @@ func InstallChart(name, repo, chart string, args map[string]string, namespace st
 		// log.Fatal(err)
 		return err
 	}
-
+	fmt.Printf("vals: %v", vals)
 	// Add args
+	args := []string{
+		"operator.scannerReportTTL=4m",
+		"targetNamespaces=kube-system\\,kube-public",
+	}
+	// mergedValues := make(map[string]interface{})
+
+	// Merge maps using the mergo library function
+	// values := mergeMaps(vals, args)
+	// if err != nil {
+	// 	return err
+	// }
 	if args != nil {
-		if err := strvals.ParseInto(args["set"], vals); err != nil {
-			log.Fatal(errors.Wrap(err, "failed parsing --set data"))
-			return err
+		for _, a := range args {
+			if err := strvals.ParseInto(a, vals); err != nil {
+				log.Fatal(errors.Wrap(err, "failed parsing --set data"))
+				return err
+			}
 		}
 	}
 
@@ -415,6 +437,21 @@ func InstallChart(name, repo, chart string, args map[string]string, namespace st
 		fmt.Println(release.Manifest)
 	}
 	return nil
+}
+func mergeMaps(map1, map2 map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{})
+
+	// Add all key-value pairs from map1 to merged
+	for key, value := range map1 {
+		merged[key] = value
+	}
+
+	// Add all key-value pairs from map2 to merged (overwriting existing keys)
+	for key, value := range map2 {
+		merged[key] = value
+	}
+
+	return merged
 }
 func UnInstallChart(settings *cli.EnvSettings, name string) {
 	actionConfig := new(action.Configuration)
