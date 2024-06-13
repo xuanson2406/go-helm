@@ -183,18 +183,30 @@ func main() {
 	// 	fmt.Printf("Can not download file kubeconfig of cluster %s: %v", clusterName, err)
 	// }
 	// settings.KubeConfig = "/home/sondx12/.kube/shoot-config"
-	kubeconfigFile := os.Getenv("HOME") + "/.kube/target-kubeconfig.yaml"
-	settings = CreateSetting("", kubeconfigFile)
-	// Add helm repo
-	RepoAdd(repoName, url1)
+	// kubeconfigFile := os.Getenv("HOME") + "/.kube/target-kubeconfig.yaml"
+	// settings = CreateSetting("", kubeconfigFile)
+	// // Add helm repo
+	// RepoAdd(repoName, url1)
 
-	// Update charts from the helm repo
-	RepoUpdate()
+	// // Update charts from the helm repo
+	// RepoUpdate()
 
-	// Install charts
-	settings = CreateSetting(namespace, kubeconfigFile)
-	InstallChart(releaseName, repoName, chartName, namespace)
+	// // Install charts
+	// settings = CreateSetting(namespace, kubeconfigFile)
+	// InstallChart(releaseName, repoName, chartName, namespace)
 
+	rule :=
+		`- rule: kube-system-ignore
+	condition:
+	  kubernetes.pod.namespace == "kube-system"
+	priority: 100
+	output:
+	  skip: true`
+
+	customRule := fmt.Sprintf(`
+custom-rules.yaml: |-
+  %s\n`, rule)
+	fmt.Printf(customRule)
 	// Install GPU Operator
 	// os.Setenv("HELM_NAMESPACE", "gpu-operator")
 	// err := InstallChart(releaseName, repoName, chartName, args)
