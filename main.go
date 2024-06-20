@@ -27,6 +27,7 @@ import (
 	"helm.sh/helm/v3/pkg/cli/values"
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
+	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -37,17 +38,51 @@ import (
 var settings *cli.EnvSettings
 var err error
 
+type AuditEvent struct {
+	// Kind       string `json:"kind"`
+	// APIVersion string `json:"apiVersion"`
+	// Level      string `json:"level"`
+	AuditID string `json:"auditID"`
+	// Stage      string `json:"stage"`
+	RequestURI string `json:"requestURI"`
+	Verb       string `json:"verb"`
+	User       struct {
+		Username string `json:"username"`
+		// UID      string   `json:"uid"`
+		// Groups   []string `json:"groups"`
+	} `json:"user"`
+	// SourceIPs                []string          `json:"sourceIPs"`
+	// UserAgent                string            `json:"userAgent"`
+	ObjectRef                ObjectRef `json:"objectRef"`
+	RequestReceivedTimestamp string    `json:"requestReceivedTimestamp"`
+	// StageTimestamp           string            `json:"stageTimestamp"`
+	// ResponseStatus ResponseStatus `json:"responseStatus,omitempty"`
+	// Annotations              map[string]string `json:"annotations,omitempty"`
+}
+
+type ObjectRef struct {
+	Resource  string `json:"resource"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name,omitempty"`
+	// APIVersion string `json:"apiVersion"`
+}
+
+type ResponseStatus struct {
+	Metadata interface{} `json:"metadata"`
+	Code     int         `json:"code"`
+}
+
 var (
 	// url1 = "https://registry.fke.fptcloud.com/chartrepo/xplat-fke"
-	url1 = "https://aquasecurity.github.io/helm-charts/"
+	url1 = "https://registry.fke.fptcloud.com/chartrepo/xplat-fke"
 	// repoName           = "xplat-fke"
-	repoName = "aqua"
+	repoName = "xplat-fke"
 	// chartName          = "gpu-operator"
-	chartName = "trivy-operator"
+	chartName = "falco"
 	// releaseName        = "operator"
-	releaseName = "trivy-operator"
+	releaseName = "falco"
 	// namespace          = "gpu-operator"
-	namespace          = "trivy-system"
+	namespace          = "fptcloud-runtime-security"
 	prometheus_service = "prometheus-stack-kube-prom-prometheus"
 	args               = map[string]string{
 		// comma seperated values to set
@@ -183,7 +218,7 @@ func main() {
 	// 	fmt.Printf("Can not download file kubeconfig of cluster %s: %v", clusterName, err)
 	// }
 	// settings.KubeConfig = "/home/sondx12/.kube/shoot-config"
-	// kubeconfigFile := os.Getenv("HOME") + "/.kube/target-kubeconfig.yaml"
+	kubeconfigFile := os.Getenv("HOME") + "/.kube/target-kubeconfig.yaml"
 	// settings = CreateSetting("", kubeconfigFile)
 	// // Add helm repo
 	// RepoAdd(repoName, url1)
@@ -192,21 +227,28 @@ func main() {
 	// RepoUpdate()
 
 	// // Install charts
-	// settings = CreateSetting(namespace, kubeconfigFile)
-	// InstallChart(releaseName, repoName, chartName, namespace)
+	settings = CreateSetting(namespace, kubeconfigFile)
+	// UpgradeChart(releaseName, repoName, chartName, namespace)
+	found, err := GetChartInstalled(settings, namespace, releaseName, clusterName)
+	if err != nil {
+		fmt.Printf("err: %v", err)
+	}
+	if found == nil {
+		fmt.Printf("found")
+	}
+	// 	rule :=
+	// 		`- rule: kube-system-ignore
+	//     condition:
+	//       kubernetes.pod.namespace == "kube-system"
+	//     priority: 100
+	//     output:
+	//       skip: true`
 
-	rule :=
-		`- rule: kube-system-ignore
-	condition:
-	  kubernetes.pod.namespace == "kube-system"
-	priority: 100
-	output:
-	  skip: true`
+	// 	customRule := fmt.Sprintf(
+	// 		`custom-rules.yaml: |-
+	//   %s`, rule)
+	// 	fmt.Printf(customRule)
 
-	customRule := fmt.Sprintf(`
-custom-rules.yaml: |-
-  %s\n`, rule)
-	fmt.Printf(customRule)
 	// Install GPU Operator
 	// os.Setenv("HELM_NAMESPACE", "gpu-operator")
 	// err := InstallChart(releaseName, repoName, chartName, args)
@@ -241,6 +283,36 @@ custom-rules.yaml: |-
 	// UnInstall charts
 	// UnInstallChart(settings, "sondx12")
 	// UnInstallChart(releaseNameAdapter)
+	// Define the struct to match the JSON structure
+	// Sample log data
+	// 	logData := `
+	// {"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"dc515a37-24bf-4d1f-941f-31033696a5f6","stage":"RequestReceived","requestURI":"/api/v1/namespaces/default/serviceaccounts","verb":"create","user":{"username":"system:serviceaccount:kube-system:service-account-controller","uid":"06b1f620-0219-4e46-973e-776397dbde24","groups":["system:serviceaccounts","system:serviceaccounts:kube-system","system:authenticated"]},"sourceIPs":["10.244.147.218"],"userAgent":"kube-controller-manager/v1.28.5 (linux/amd64) kubernetes/506050d/system:serviceaccount:kube-system:service-account-controller","objectRef":{"resource":"serviceaccounts","namespace":"default","apiVersion":"v1"},"requestReceivedTimestamp":"2024-04-17T07:06:45.091388Z","stageTimestamp":"2024-04-17T07:06:45.091388Z"}
+	// {"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"dc515a37-24bf-4d1f-941f-31033696a5f6","stage":"ResponseComplete","requestURI":"/api/v1/namespaces/default/serviceaccounts","verb":"create","user":{"username":"system:serviceaccount:kube-system:service-account-controller","uid":"06b1f620-0219-4e46-973e-776397dbde24","groups":["system:serviceaccounts","system:serviceaccounts:kube-system","system:authenticated"]},"sourceIPs":["10.244.147.218"],"userAgent":"kube-controller-manager/v1.28.5 (linux/amd64) kubernetes/506050d/system:serviceaccount:kube-system:service-account-controller","objectRef":{"resource":"serviceaccounts","namespace":"default","name":"default","apiVersion":"v1"},"responseStatus":{"metadata":{},"code":201},"requestReceivedTimestamp":"2024-04-17T07:06:45.091388Z","stageTimestamp":"2024-04-17T07:06:45.101769Z","annotations":{"authorization.k8s.io/decision":"allow","authorization.k8s.io/reason":"RBAC: allowed by ClusterRoleBinding \"system:controller:service-account-controller\" of ClusterRole \"system:controller:service-account-controller\" to ServiceAccount \"service-account-controller/kube-system\""}}
+	// {"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"9f0d74d6-de7b-4e40-ba8f-aead69eeb72c","stage":"RequestReceived","requestURI":"/api/v1/namespaces/kube-node-lease/serviceaccounts","verb":"create","user":{"username":"system:serviceaccount:kube-system:service-account-controller","uid":"06b1f620-0219-4e46-973e-776397dbde24","groups":["system:serviceaccounts","system:serviceaccounts:kube-system","system:authenticated"]},"sourceIPs":["10.244.147.218"],"userAgent":"kube-controller-manager/v1.28.5 (linux/amd64) kubernetes/506050d/system:serviceaccount:kube-system:service-account-controller","objectRef":{"resource":"serviceaccounts","namespace":"kube-node-lease","apiVersion":"v1"},"requestReceivedTimestamp":"2024-04-17T07:06:45.102697Z","stageTimestamp":"2024-04-17T07:06:45.102697Z"}
+	// {"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"9f0d74d6-de7b-4e40-ba8f-aead69eeb72c","stage":"ResponseComplete","requestURI":"/api/v1/namespaces/kube-node-lease/serviceaccounts","verb":"create","user":{"username":"system:serviceaccount:kube-system:service-account-controller","uid":"06b1f620-0219-4e46-973e-776397dbde24","groups":["system:serviceaccounts","system:serviceaccounts:kube-system","system:authenticated"]},"sourceIPs":["10.244.147.218"],"userAgent":"kube-controller-manager/v1.28.5 (linux/amd64) kubernetes/506050d/system:serviceaccount:kube-system:service-account-controller","objectRef":{"resource":"serviceaccounts","namespace":"kube-node-lease","name":"default","apiVersion":"v1"},"responseStatus":{"metadata":{},"code":201},"requestReceivedTimestamp":"2024-04-17T07:06:45.102697Z","stageTimestamp":"2024-04-17T07:06:45.105864Z","annotations":{"authorization.k8s.io/decision":"allow","authorization.k8s.io/reason":"RBAC: allowed by ClusterRoleBinding \"system:controller:service-account-controller\" of ClusterRole \"system:controller:service-account-controller\" to ServiceAccount \"service-account-controller/kube-system\""}}
+	// {"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"7cee842c-cddb-4cbe-a440-1bffdaf121d3","stage":"RequestReceived","requestURI":"/api/v1/namespaces/kube-public/serviceaccounts","verb":"create","user":{"username":"system:serviceaccount:kube-system:service-account-controller","uid":"06b1f620-0219-4e46-973e-776397dbde24","groups":["system:serviceaccounts","system:serviceaccounts:kube-system","system:authenticated"]},"sourceIPs":["10.244.147.218"],"userAgent":"kube-controller-manager/v1.28.5 (linux/amd64) kubernetes/506050d/system:serviceaccount:kube-system:service-account-controller","objectRef":{"resource":"serviceaccounts","namespace":"kube-public","apiVersion":"v1"},"requestReceivedTimestamp":"2024-04-17T07:06:45.106682Z","stageTimestamp":"2024-04-17T07:06:45.106682Z"}
+	// {"kind":"Event","apiVersion":"audit.k8s.io/v1","level":"Metadata","auditID":"7cee842c-cddb-4cbe-a440-1bffdaf121d3","stage":"ResponseComplete","requestURI":"/api/v1/namespaces/kube-public/serviceaccounts","verb":"create","user":{"username":"system:serviceaccount:kube-system:service-account-controller","uid":"06b1f620-0219-4e46-973e-776397dbde24","groups":["system:serviceaccounts","system:serviceaccounts:kube-system","system:authenticated"]},"sourceIPs":["10.244.147.218"],"userAgent":"kube-controller-manager/v1.28.5 (linux/amd64) kubernetes/506050d/system:serviceaccount:kube-system:service-account-controller","objectRef":{"resource":"serviceaccounts","namespace":"kube-public","name":"default","apiVersion":"v1"},"responseStatus":{"metadata":{},"code":201},"requestReceivedTimestamp":"2024-04-17T07:06:45.106682Z","stageTimestamp":"2024-04-17T07:06:45.110081Z","annotations":{"authorization.k8s.io/decision":"allow","authorization.k8s.io/reason":"RBAC: allowed by ClusterRoleBinding \"system:controller:service-account-controller\" of ClusterRole \"system:controller:service-account-controller\" to ServiceAccount \"service-account-controller/kube-system\""}}
+	// `
+
+	// 	// Split the log data into lines
+	// 	logLines := strings.Split(strings.TrimSpace(logData), "\n")
+
+	// 	var events []AuditEvent
+
+	// 	// Iterate over each log line and unmarshal into the struct
+	// 	for _, line := range logLines {
+	// 		var event AuditEvent
+	// 		if err := json.Unmarshal([]byte(line), &event); err != nil {
+	// 			log.Fatalf("Error unmarshalling line: %v", err)
+	// 		}
+	// 		events = append(events, event)
+	// 	}
+
+	// 	// Print the result
+	// 	for _, event := range events {
+	// 		fmt.Printf("%+v\n", event)
+	// 	}
+
 }
 
 func CreateSetting(namespace string, kubeconfig string) *cli.EnvSettings {
@@ -450,6 +522,115 @@ func InstallChart(name, repo, chart string, namespace string) error {
 	}
 	return nil
 }
+
+// InstallChart
+func UpgradeChart(name, repo, chart string, namespace string) error {
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), debug); err != nil {
+		// log.Fatal(err)
+		return err
+	}
+	client := action.NewUpgrade(actionConfig)
+
+	if client.Version == "" && client.Devel {
+		client.Version = ">0.0.0-0"
+	}
+	client.Namespace = namespace
+	client.Install = true
+	cp, err := client.ChartPathOptions.LocateChart(fmt.Sprintf("%s/%s", repo, chart), settings)
+	if err != nil {
+		// log.Fatal(err)
+		return err
+	}
+
+	debug("CHART PATH: %s\n", cp)
+
+	p := getter.All(settings)
+	valueOpts := &values.Options{}
+	vals, err := valueOpts.MergeValues(p)
+	if err != nil {
+		// log.Fatal(err)
+		return err
+	}
+	fmt.Printf("vals: %v", vals)
+	// Add args
+	args := []string{
+		"falcosidekick.config.telegram.chatid=LTQxNjA2NTUyNTI=",
+		"falcosidekick.config.telegram.token=NzA1NTIzMTA3MTpBQUc1aWFaRzh3MnNIZTNkbks1YlQwel91b2JGenNFdjVWbw==",
+		"driver.kind=ebpf",
+		"tty=true",
+		"falcosidekick.enabled=true",
+		"falcosidekick.webui.enabled=true",
+	}
+	// mergedValues := make(map[string]interface{})
+
+	// Merge maps using the mergo library function
+	// values := mergeMaps(vals, args)
+	// if err != nil {
+	// 	return err
+	// }
+	if args != nil {
+		for _, a := range args {
+			if err := strvals.ParseInto(a, vals); err != nil {
+				log.Fatal(errors.Wrap(err, "failed parsing --set data"))
+				return err
+			}
+		}
+	}
+
+	// Check chart dependencies to make sure all are present in /charts
+	chartRequested, err := loader.Load(cp)
+	if err != nil {
+		// log.Fatal(err)
+		return err
+	}
+
+	validInstallableChart, err := isChartInstallable(chartRequested)
+	if !validInstallableChart {
+		// log.Fatal(err)
+		return err
+	}
+
+	if req := chartRequested.Metadata.Dependencies; req != nil {
+		// If CheckDependencies returns an error, we have unfulfilled dependencies.
+		// As of Helm 2.4.0, this is treated as a stopping condition:
+		// https://github.com/helm/helm/issues/2209
+		if err := action.CheckDependencies(chartRequested, req); err != nil {
+			if client.DependencyUpdate {
+				man := &downloader.Manager{
+					Out:              os.Stdout,
+					ChartPath:        cp,
+					Keyring:          client.ChartPathOptions.Keyring,
+					SkipUpdate:       false,
+					Getters:          p,
+					RepositoryConfig: settings.RepositoryConfig,
+					RepositoryCache:  settings.RepositoryCache,
+				}
+				if err := man.Update(); err != nil {
+					// log.Fatal(err)
+					return err
+				}
+			} else {
+				// log.Fatal(err)
+				return err
+			}
+		}
+	}
+
+	client.Namespace = namespace
+	release, err := client.Run(releaseName, chartRequested, vals)
+	if err != nil {
+		if err.Error() == "cannot re-use a name that is still in use" {
+			fmt.Println("already installed")
+		} else {
+			// log.Fatal(err)
+			return err
+		}
+	} else {
+		fmt.Println(release.Manifest)
+	}
+	return nil
+}
 func mergeMaps(map1, map2 map[string]interface{}) map[string]interface{} {
 	merged := make(map[string]interface{})
 
@@ -526,6 +707,27 @@ func buildConfig(kubeconfigFile string) (*rest.Config, error) {
 	}
 
 	return clientcmd.BuildConfigFromFlags("", *kubeconfig)
+}
+
+func GetChartInstalled(settings *cli.EnvSettings, ns, chartName, clusterName string) (*release.Release, error) {
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), ns, os.Getenv("HELM_DRIVER"), debug); err != nil {
+		return nil, fmt.Errorf("Unable to init action config to list releases in shoot cluster %s: [%v]\n", clusterName, err)
+	}
+	client := action.NewList(actionConfig)
+
+	// client.AllNamespaces = true
+	client.All = true
+	release, err := client.Run()
+	if err != nil {
+		return nil, fmt.Errorf("Unable to list releases in shoot cluster  %s: [%v]\n", clusterName, err)
+	}
+	for _, r := range release {
+		if strings.Contains(r.Name, chartName) {
+			return r, nil
+		}
+	}
+	return nil, nil
 }
 
 // func installChart(value string, repoName string, chartName string, releaseName string, namespace string) error {
